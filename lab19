@@ -1,0 +1,124 @@
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Management;
+using System.Windows.Forms;
+
+namespace HardwareInfoWinForms
+{
+public class HardwareForm : Form
+{
+
+class Query
+{
+public string Title, WmiClass, Property;
+public Query(string t, string c, string p)
+{
+Title = t; WmiClass = c; Property = p;
+}
+}
+
+
+readonly List<Query> queries = new List<Query>
+{
+new Query("Процесор",          "Win32_Processor",       "Name"),
+new Query("Виробник процесора","Win32_Processor",       "Manufacturer"),
+new Query("Опис процесора",    "Win32_Processor",       "Description"),
+new Query("Відеокарта",        "Win32_VideoController", "Name"),
+new Query("Відеопроцесор",     "Win32_VideoController", "VideoProcessor"),
+new Query("Версія драйвера",   "Win32_VideoController", "DriverVersion"),
+new Query("Об’єм відеопам'яті","Win32_VideoController", "AdapterRAM"),
+new Query("DVD‑назва",         "Win32_CDROMDrive",      "Name"),
+new Query("DVD‑буква",         "Win32_CDROMDrive",      "Drive"),
+new Query("HDD модель",        "Win32_DiskDrive",       "Caption"),
+new Query("HDD розмір байт",   "Win32_DiskDrive",       "Size"),
+new Query("Мат.плата модель",  "Win32_BaseBoard",       "Product"),
+new Query("Виробник плати",    "Win32_BaseBoard",       "Manufacturer"),
+new Query("Мереж.адаптер",     "Win32_NetworkAdapter",  "Name"),
+new Query("MAC‑адреса",        "Win32_NetworkAdapter",  "MACAddress"),
+new Query("BIOS версія",       "Win32_BIOS",            "SMBIOSBIOSVersion"),
+new Query("BIOS постачальник", "Win32_BIOS",            "Manufacturer"),
+};
+
+public HardwareForm()
+{
+Text = "лаб19";
+AutoScroll = true;
+ClientSize = new Size(580, 780);
+}
+
+protected override void OnLoad(EventArgs e)
+{
+base.OnLoad(e);
+int y = 20;
+foreach (var q in queries)
+{
+var lbl = new Label
+{
+Text = q.Title + ":",
+Location = new Point(20, y),
+AutoSize = true,
+Font = new Font("Segoe UI", 9, FontStyle.Bold)
+};
+Controls.Add(lbl);
+
+var txt = new TextBox
+{
+Location = new Point(200, y - 3),
+Width = 350,
+ReadOnly = true,
+Font = new Font("Segoe UI", 9)
+};
+Controls.Add(txt);
+
+
+txt.Text = string.Join("; ", GetHardwareInfo(q.WmiClass, q.Property));
+
+y += 30;
+}
+}
+
+static List<string> GetHardwareInfo(string wmiClass, string property)
+{
+var list = new List<string>();
+try
+{
+
+using (var searcher = new ManagementObjectSearcher(
+"SELECT " + property + " FROM " + wmiClass))
+{
+foreach (ManagementObject obj in searcher.Get())
+{
+var v = obj[property];
+if (v != null)
+list.Add(v.ToString().Trim());
+}
+}
+}
+catch (Exception ex)
+{
+list.Add("Error: " + ex.Message);
+}
+return list;
+}
+}
+}
+
+
+using System;
+using System.Windows.Forms;
+
+namespace HardwareInfoWinForms
+{
+    static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            // класичний запуск WinForms під .NET Framework
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new HardwareForm());
+        }
+    }
+}
