@@ -1,0 +1,170 @@
+using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Windows.Forms;
+
+namespace ProcessExplorerCodeOnly
+{
+public class MainForm : Form
+{
+DataGridView grid;
+Panel bottomPanel;
+Button refreshBtn;
+Button exportBtn;
+ContextMenuStrip contextMenu;
+ToolStripMenuItem detailsItem;
+ToolStripMenuItem killItem;
+Process selectedProc;
+
+public MainForm()
+{
+Text = "Process Explorer (Code Only)";
+Width = 800;
+Height = 600;
+
+// Таблиця процесів
+grid = new DataGridView
+{
+Dock = DockStyle.Fill,
+ReadOnly = true,
+AllowUserToAddRows = false,
+SelectionMode = DataGridViewSelectionMode.FullRowSelect
+};
+grid.Columns.Add("Id", "Id");
+grid.Columns.Add("Name", "Name");
+grid.Columns.Add("StartTime", "StartTime");
+grid.Columns.Add("VirtualMem", "VirtualMemory");
+grid.MouseClick += Grid_MouseClick;
+
+// Нижня панель із кнопками
+bottomPanel = new Panel
+{
+Dock = DockStyle.Bottom,
+Height = 40
+};
+
+refreshBtn = new Button
+{
+Text = "Оновити",
+Width = 100,
+Left = 10,
+Top = 5
+};
+refreshBtn.Click += (s, e) => LoadProcesses();
+
+exportBtn = new Button
+{
+Text = "Експорт",
+Width = 100,
+Left = refreshBtn.Right + 10,
+Top = 5
+};
+exportBtn.Click += (s, e) => ExportProcesses();
+
+bottomPanel.Controls.Add(refreshBtn);
+bottomPanel.Controls.Add(exportBtn);
+
+// Контекстне меню для рядка
+contextMenu = new ContextMenuStrip();
+detailsItem = new ToolStripMenuItem("Деталі", null, (s, e) => ShowDetails());
+killItem = new ToolStripMenuItem("Зупинити процес", null, (s, e) => KillProcess());
+contextMenu.Items.Add(detailsItem);
+contextMenu.Items.Add(killItem);
+
+// Додаємо все на форму
+Controls.Add(grid);
+Controls.Add(bottomPanel);
+
+// Завантаження процесів у OnLoad, коли форма вже має розміри
+Load += (s, e) => LoadProcesses();
+}
+
+void LoadProcesses()
+{
+grid.Rows.Clear();
+var procs = Process.GetProcesses().OrderBy(p => p.ProcessName);
+foreach (var p in procs)
+{
+string st;
+try { st = p.StartTime.ToString(); }
+catch { st = "Н/Д"; }
+grid.Rows.Add(p.Id, p.ProcessName, st, p.VirtualMemorySize64);
+}
+}
+
+void Grid_MouseClick(object sender, MouseEventArgs e)
+{
+if (e.Button != MouseButtons.Right) return;
+var hit = grid.HitTest(e.X, e.Y);
+if (hit.RowIndex < 0) return;
+grid.ClearSelection();
+grid.Rows[hit.RowIndex].Selected = true;
+int pid = (int)grid.Rows[hit.RowIndex].Cells[0].Value;
+try { selectedProc = Process.GetProcessById(pid); }
+catch { selectedProc = null; }
+contextMenu.Show(grid, e.Location);
+}
+
+void ShowDetails()
+{
+if (selectedProc == null) return;
+var info = "Потоки:\r\n";
+foreach (ProcessThread t in selectedProc.Threads)
+info += $"Id={t.Id}, Pri={t.PriorityLevel}, Start={(t.StartTime.ToString() ?? "Н/Д")}\r\n";
+info += "\r\nМодулі:\r\n";
+foreach (ProcessModule m in selectedProc.Modules)
+info += $"{m.ModuleName} ({Path.GetFileName(m.FileName)}), Size={m.ModuleMemorySize}\r\n";
+MessageBox.Show(info, $"Деталі {selectedProc.ProcessName}", MessageBoxButtons.OK, MessageBoxIcon.Information);
+}
+
+void KillProcess()
+{
+if (selectedProc == null) return;
+try
+{
+selectedProc.Kill();
+LoadProcesses();
+}
+catch (Exception ex)
+{
+MessageBox.Show($"Не вдалося зупинити процес: {ex.Message}", "Помилка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+}
+}
+
+void ExportProcesses()
+{
+var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "processes.txt");
+using (var sw = new StreamWriter(path, false))
+{
+foreach (DataGridViewRow row in grid.Rows)
+{
+sw.WriteLine($"{row.Cells[0].Value}\t{row.Cells[1].Value}\t{row.Cells[2].Value}\t{row.Cells[3].Value}");
+}
+}
+MessageBox.Show($"Експортовано у {path}", "Готово", MessageBoxButtons.OK, MessageBoxIcon.Information);
+}
+}
+}
+
+
+
+
+
+
+using System;
+using System.Windows.Forms;
+
+namespace ProcessExplorerCodeOnly
+{
+    static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new MainForm());
+        }
+    }
+}
