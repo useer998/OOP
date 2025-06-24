@@ -1,0 +1,426 @@
+using System;
+using System.Drawing;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.Security.Cryptography;
+
+namespace CryptoDemo
+{
+static class Program
+{
+[STAThread]
+static void Main()
+{
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+Application.Run(new Form1());
+}
+}
+
+public class Form1 : Form
+{
+private TextBox txtInput;
+private Button btnRunAll;
+private Label lblIdeaResult;
+private Label lblMdc4Result;
+private Label lblA5Result;
+
+public Form1()
+{
+this.Text = "Crypto Demo - IDEA, MDC-4, A5/1";
+this.Size = new Size(650, 300);
+this.StartPosition = FormStartPosition.CenterScreen;
+
+txtInput = new TextBox
+{
+Location = new Point(20, 20),
+Width = 450
+};
+this.Controls.Add(txtInput);
+
+btnRunAll = new Button
+{
+Text = "Run All (Async)",
+Location = new Point(490, 18),
+Width = 120
+};
+btnRunAll.Click += BtnRunAll_Click;
+this.Controls.Add(btnRunAll);
+
+lblIdeaResult = new Label
+{
+Text = "IDEA Encrypted: ",
+Location = new Point(20, 70),
+Width = 600
+};
+this.Controls.Add(lblIdeaResult);
+
+lblMdc4Result = new Label
+{
+Text = "MDC-4 Code: ",
+Location = new Point(20, 110),
+Width = 600
+};
+this.Controls.Add(lblMdc4Result);
+
+lblA5Result = new Label
+{
+Text = "A5/1 Encrypted: ",
+Location = new Point(20, 150),
+Width = 600
+};
+this.Controls.Add(lblA5Result);
+}
+
+private async void BtnRunAll_Click(object sender, EventArgs e)
+{
+string input = txtInput.Text.Trim();
+if (string.IsNullOrEmpty(input))
+{
+MessageBox.Show("Введіть будь ласка рядок для обробки.");
+return;
+}
+
+try
+{
+var ideaTask = Task.Run(() =>
+{
+// Використовуємо фіксований ключ або можна згенерувати випадковий
+string key = "MySecretKeyForIDEA";
+byte[] encrypted = IdeaEncryptor.EncryptString(input, key);
+return BitConverter.ToString(encrypted).Replace("-", "");
+});
+
+var mdc4Task = Task.Run(() =>
+{
+byte[] code = Mdc4Hash.ComputeMdc4(input);
+return BitConverter.ToString(code).Replace("-", "");
+});
+
+var a5Task = Task.Run(() =>
+{
+string key = "MyA5Key123";
+byte[] encrypted = A5Cipher.EncryptString(input, key);
+return BitConverter.ToString(encrypted).Replace("-", "");
+});
+
+var results = await Task.WhenAll(ideaTask, mdc4Task, a5Task);
+
+lblIdeaResult.Text = "IDEA Encrypted: " + results[0];
+lblMdc4Result.Text = "MDC-4 Code: " + results[1];
+lblA5Result.Text = "A5/1 Encrypted: " + results[2];
+}
+catch (Exception ex)
+{
+MessageBox.Show("Помилка: " + ex.Message);
+}
+}
+}
+/// <summary>
+/// Реалізація IDEA (International Data Encryption Algorithm) для демонстрації.
+/// Ключ формується з рядка: беремо MD5 хеш (128 біт) і використовуємо як 16-байтний ключ.
+/// Блочний режим ECB, паддінг нульовими байтами (лише для демонстрації!).
+/// У реальному застосуванні слід обирати режим і паддінг відповідно до вимог безпеки.
+/// </summary>
+public static class IdeaEncryptor
+{
+private const int ROUNDS = 8;
+private const int KEY_WORDS = 6 * ROUNDS + 4; // 52 субключі 16-біт
+
+public static byte[] EncryptString(string plaintext, string key)
+{
+byte[] ptBytes = Encoding.UTF8.GetBytes(plaintext);
+int blockSize = 8;
+int paddedLength = ((ptBytes.Length + blockSize - 1) / blockSize) * blockSize;
+byte[] input = new byte[paddedLength];
+Array.Copy(ptBytes, input, ptBytes.Length);
+byte[] output = new byte[paddedLength];
+
+byte[] keyBytes = DeriveKeyBytes(key); // 16 байт
+ushort[] subKeys = GenerateEncryptionSubKeys(keyBytes);
+
+for (int offset = 0; offset < paddedLength; offset += blockSize)
+{
+byte[] block = new byte[blockSize];
+Array.Copy(input, offset, block, 0, blockSize);
+byte[] enc = EncryptBlock(block, subKeys);
+Array.Copy(enc, 0, output, offset, blockSize);
+}
+return output;
+}
+
+private static byte[] DeriveKeyBytes(string key)
+{
+using (var md5 = MD5.Create())
+{
+byte[] hash = md5.ComputeHash(Encoding.UTF8.GetBytes(key));
+return hash; // 16 байт
+}
+}
+
+private static ushort[] GenerateEncryptionSubKeys(byte[] keyBytes)
+{
+// З ключа 16 байт формуються 8 слів по 16 біт
+ushort[] keyWords = new ushort[8];
+for (int i = 0; i < 8; i++)
+{
+keyWords[i] = (ushort)((keyBytes[2 * i] << 8) | keyBytes[2 * i + 1]);
+}
+ushort[] subKeys = new ushort[KEY_WORDS];
+// Головне правило: циклічний зсув ключа на 25 біт між раундами
+// Зараз генеруємо 52 слова по 16 біт
+for (int i = 0; i < KEY_WORDS; i++)
+{
+int idx = i % 8;
+subKeys[i] = keyWords[idx];
+// Після взяття слова зсуваємо весь масив ключових слів на 25 біт перед наступними раундами
+if ((i % 8) == 7)
+{
+// робимо 25-бітний лівий циклічний зсув у масиві keyWords (128 біт)
+// збираємо в 128-бітове значення, робимо зсув, потім розбиваємо назад
+ulong high = 0, low = 0;
+for (int j = 0; j < 4; j++)
+{
+high = (high << 16) | keyWords[j];
+}
+for (int j = 4; j < 8; j++)
+{
+low = (low << 16) | keyWords[j];
+}
+// high: верхні 64 біт, low: нижні 64 біт, разом 128.
+// Виконуємо циклічний зсув на 25 біт.
+// Представимо як дві частини 64 біт, але простіше зібрати у дві ulong і оперувати з ними.
+// Зсуваємо загалом 128-бітове представлення:
+// combine = (high << 64) | low -> не можна напряму, тому використаємо логіку шматками
+// Тут зробимо поступовий зсув: наприклад, зсунути на 25 біт: зсунути high<<25 зі збереженням верхніх біт low тощо.
+// Простий спосіб: об'єднати в масив байт, зсунути біти. Але для демонстрації можна імітувати:
+byte[] full = new byte[16];
+for (int j = 0; j < 8; j++)
+{
+full[j] = (byte)(keyWords[j] >> 8);
+full[j + 8] = (byte)(keyWords[j] & 0xFF);
+}
+// зсув в байтах та бітах
+int bitShift = 25;
+byte[] shifted = new byte[16];
+for (int bit = 0; bit < 128; bit++)
+{
+int srcBitIndex = (bit + bitShift) % 128;
+int srcByte = srcBitIndex / 8;
+int srcBitInByte = 7 - (srcBitIndex % 8);
+int dstByte = bit / 8;
+int dstBitInByte = 7 - (bit % 8);
+int bitVal = (full[srcByte] >> srcBitInByte) & 1;
+shifted[dstByte] |= (byte)(bitVal << dstBitInByte);
+}
+for (int j = 0; j < 8; j++)
+{
+keyWords[j] = (ushort)((shifted[j] << 8) | shifted[j + 8]);
+}
+}
+}
+return subKeys;
+}
+private static byte[] EncryptBlock(byte[] block, ushort[] subKeys)
+{
+// Блочний розмір 64 біта: 4 слова по 16 біт
+ushort x1 = (ushort)((block[0] << 8) | block[1]);
+ushort x2 = (ushort)((block[2] << 8) | block[3]);
+ushort x3 = (ushort)((block[4] << 8) | block[5]);
+ushort x4 = (ushort)((block[6] << 8) | block[7]);
+int keyIndex = 0;
+
+for (int round = 0; round < ROUNDS; round++)
+{
+x1 = Mul(x1, subKeys[keyIndex++]);
+x2 = (ushort)((x2 + subKeys[keyIndex++]) & 0xFFFF);
+x3 = (ushort)((x3 + subKeys[keyIndex++]) & 0xFFFF);
+x4 = Mul(x4, subKeys[keyIndex++]);
+
+ushort t0 = (ushort)(x1 ^ x3);
+ushort t1 = (ushort)(x2 ^ x4);
+
+t0 = Mul(t0, subKeys[keyIndex++]);
+t1 = (ushort)((t1 + t0) & 0xFFFF);
+t1 = Mul(t1, subKeys[keyIndex++]);
+t0 = (ushort)((t0 + t1) & 0xFFFF);
+
+x1 ^= t1;
+x4 ^= t0;
+// обмін x2 і x3 з подальшим XOR
+ushort temp = x2;
+x2 = (ushort)(x3 ^ t1);
+x3 = (ushort)(temp ^ t0);
+}
+
+// Фінальний трансформ
+ushort y1 = Mul(x1, subKeys[keyIndex++]);
+ushort y2 = (ushort)((x3 + subKeys[keyIndex++]) & 0xFFFF);
+ushort y3 = (ushort)((x2 + subKeys[keyIndex++]) & 0xFFFF);
+ushort y4 = Mul(x4, subKeys[keyIndex++]);
+
+byte[] outBlock = new byte[8];
+outBlock[0] = (byte)(y1 >> 8);
+outBlock[1] = (byte)(y1 & 0xFF);
+outBlock[2] = (byte)(y2 >> 8);
+outBlock[3] = (byte)(y2 & 0xFF);
+outBlock[4] = (byte)(y3 >> 8);
+outBlock[5] = (byte)(y3 & 0xFF);
+outBlock[6] = (byte)(y4 >> 8);
+outBlock[7] = (byte)(y4 & 0xFF);
+return outBlock;
+}
+
+private static ushort Mul(ushort a, ushort b)
+{
+// множення за модулем 65537 з представленням 0 як 65536
+uint x = (a == 0) ? 0x10000u : a;
+uint y = (b == 0) ? 0x10000u : b;
+uint prod = (x * y) % 0x10001;
+if (prod == 0x10000) // якщо результат 65536, повернути 0
+return 0;
+return (ushort)prod;
+}
+}
+
+/// <summary>
+/// Спрощена демонстраційна версія MDC-4.
+/// У реальній ситуації слід використовувати перевірену бібліотеку чи алгоритм.
+/// Тут просто беремо MD5 від вхідного рядка і формуємо 4-байтовий контрольний код.
+/// </summary>
+public static class Mdc4Hash
+{
+public static byte[] ComputeMdc4(string input)
+{
+using (var md5 = MD5.Create())
+{
+byte[] hash = md5.ComputeHash(Encoding.UTF8.GetBytes(input));
+// Формуємо 4 байти: наприклад, XOR кожного 4-го байта або просто беремо перші 4 байти.
+// Для демонстрації візьмемо перші 4 байти:
+byte[] code = new byte[4];
+Array.Copy(hash, 0, code, 0, 4);
+return code;
+}
+}
+}
+
+/// <summary>
+/// Потоковий шифр A5/1 (спрощена реалізація для демонстрації).
+/// Використовує ключ, сформований із рядка: беремо SHA-1 хеш і використовуємо початкові біти для 3 регістрів LFSR.
+/// </summary>
+public static class A5Cipher
+{
+// Довжини регістрів за специфікацією A5/1: 19, 22, 23
+private const int R1_LEN = 19;
+private const int R2_LEN = 22;
+private const int R3_LEN = 23;
+// Тактові біти (clocking bits) для majority:
+private const int R1_CLOCK_BIT = 8;
+private const int R2_CLOCK_BIT = 10;
+private const int R3_CLOCK_BIT = 10;
+// Тапи для зсуву (feedback taps)
+private static readonly int[] R1_TAPS = { 13, 16, 17, 18 };
+private static readonly int[] R2_TAPS = { 20, 21 };
+private static readonly int[] R3_TAPS = { 7, 20, 21, 22 };
+
+public static byte[] EncryptString(string plaintext, string key)
+{
+byte[] ptBytes = Encoding.UTF8.GetBytes(plaintext);
+// Ініціалізуємо регістри A5/1
+bool[] R1 = new bool[R1_LEN];
+bool[] R2 = new bool[R2_LEN];
+bool[] R3 = new bool[R3_LEN];
+
+InitializeRegisters(key, R1, R2, R3);
+
+byte[] output = new byte[ptBytes.Length];
+for (int i = 0; i < ptBytes.Length; i++)
+{
+byte b = ptBytes[i];
+byte outB = 0;
+for (int bit = 0; bit < 8; bit++)
+{
+bool ksBit = GetKeystreamBit(R1, R2, R3);
+byte inBit = (byte)((b >> (7 - bit)) & 1);
+byte xored = (byte)(inBit ^ (ksBit ? 1 : 0));
+outB |= (byte)(xored << (7 - bit));
+}
+output[i] = outB;
+}
+return output;
+}
+
+private static void InitializeRegisters(string key, bool[] R1, bool[] R2, bool[] R3)
+{
+// Формуємо байтовий хеш із ключа, наприклад SHA-1 (160 біт)
+byte[] hash;
+using (var sha1 = SHA1.Create())
+{
+hash = sha1.ComputeHash(Encoding.UTF8.GetBytes(key));
+}
+// Використаємо початкові біти хешу для заповнення регістрів
+int bitIndex = 0;
+FillRegister(R1, hash, ref bitIndex);
+FillRegister(R2, hash, ref bitIndex);
+FillRegister(R3, hash, ref bitIndex);
+// У реальному A5/1 використовують також frame number для 100 тактів і т.д.
+// Тут для демонстрації обходимо цю стадію.
+}
+
+private static void FillRegister(bool[] R, byte[] hash, ref int bitIndex)
+{
+for (int i = 0; i < R.Length; i++)
+{
+int byteIndex = bitIndex / 8;
+int bitInByte = 7 - (bitIndex % 8);
+if (byteIndex < hash.Length)
+{
+R[i] = ((hash[byteIndex] >> bitInByte) & 1) == 1;
+}
+else
+{
+// Якщо хеш завершився, просто залишимо false
+R[i] = false;
+}
+bitIndex++;
+}
+}
+
+private static bool GetKeystreamBit(bool[] R1, bool[] R2, bool[] R3)
+{
+// Обчислюємо majority тактових бітів
+bool bit1 = R1[R1_CLOCK_BIT];
+bool bit2 = R2[R2_CLOCK_BIT];
+bool bit3 = R3[R3_CLOCK_BIT];
+bool majority = (bit1 && bit2) || (bit1 && bit3) || (bit2 && bit3);
+
+// Кожен регістр тактується, якщо його тактовий біт дорівнює majority
+if (R1[R1_CLOCK_BIT] == majority)
+ShiftRegister(R1, R1_TAPS);
+if (R2[R2_CLOCK_BIT] == majority)
+ShiftRegister(R2, R2_TAPS);
+if (R3[R3_CLOCK_BIT] == majority)
+ShiftRegister(R3, R3_TAPS);
+
+// Генеруємо вихідний біт як XOR вихідних бітів регістрів
+bool outBit = R1[R1_LEN - 1] ^ R2[R2_LEN - 1] ^ R3[R3_LEN - 1];
+return outBit;
+}
+
+private static void ShiftRegister(bool[] R, int[] taps)
+{
+bool feedback = false;
+foreach (int t in taps)
+{
+feedback ^= R[t];
+}
+// зрушуємо вправо: останній біт вилітає, на початок вставляємо feedback
+for (int i = R.Length - 1; i > 0; i--)
+{
+R[i] = R[i - 1];
+}
+R[0] = feedback;
+}
+}
+}
