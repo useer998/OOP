@@ -1,0 +1,364 @@
+using System;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Windows.Forms;
+using System.Threading.Tasks;
+using System.Drawing;
+
+namespace WindowsFormsApp11
+{
+/// <summary>
+/// Головна форма UDP-чату. Відповідає за інтерфейс, мережеву логіку, та збереження логу.
+/// </summary>
+public class Form1 : Form
+{
+// Флаг роботи чату
+bool alive = false;
+// Клієнт для відправки/прийому UDP-повідомлень
+UdpClient client;
+// Multicast адреса групи
+IPAddress groupAddress;
+// Ім'я користувача
+string userName;
+
+// Налаштування мережі (за замовчуванням)
+int LOCALPORT = 8001;
+int REMOTEPORT = 8001;
+string GROUPHOST = "235.5.5.1";
+int TTL = 20;
+
+// Шрифт для повідомлень
+Font chatFont;
+// Шлях до файлу логу
+string logFilePath;
+
+// Елементи інтерфейсу
+TextBox userNameTextBox;
+Button loginButton;
+Button logoutButton;
+RichTextBox chatTextBox;
+TextBox messageTextBox;
+Button sendButton;
+Button settingsButton;
+
+/// <summary>
+/// Конструктор: встановлює властивості самої форми та ініціалізує інтерфейс
+/// </summary>
+public Form1()
+{
+// Заголовок та розміри вікна
+this.Text = "UDP Chat";
+this.ClientSize = new System.Drawing.Size(800, 450);
+this.StartPosition = FormStartPosition.CenterScreen;
+this.AutoScaleMode = AutoScaleMode.Font;
+
+// Підготовка файлу логу
+logFilePath = Path.Combine(Application.StartupPath, "chat_log.txt");
+if (!File.Exists(logFilePath))
+File.WriteAllText(logFilePath, string.Empty);
+
+// Задаємо початковий шрифт і multicast-адресу
+chatFont = this.Font;
+groupAddress = IPAddress.Parse(GROUPHOST);
+
+// Створюємо і розміщуємо всі UI контролери
+InitializeInterface();
+}
+
+/// <summary>
+/// Динамічно створює всі контролери інтерфейсу та підписки на події
+/// </summary>
+private void InitializeInterface()
+{
+// Видаляємо попередні контролери (якщо перелінтували під час налаштувань)
+this.Controls.Clear();
+
+// 1) Поле для введення імені
+Label lblUser = new Label { Text = "Ім'я:", Left = 10, Top = 10, Width = 40 };
+userNameTextBox = new TextBox { Left = 60, Top = 8, Width = 200 };
+
+// Кнопки входу/виходу
+loginButton = new Button { Text = "Вхід", Left = 270, Top = 6, Width = 80 };
+logoutButton = new Button { Text = "Вихід", Left = 360, Top = 6, Width = 80, Enabled = false };
+
+// 2) Поле відображення чату
+chatTextBox = new RichTextBox
+{
+Left = 10,
+Top = 40,
+Width = 780,
+Height = 300,
+ReadOnly = true,
+Font = chatFont
+};
+
+// 3) Поле для введення нового повідомлення та кнопка
+messageTextBox = new TextBox { Left = 10, Top = 350, Width = 680 };
+sendButton = new Button { Text = "Відправити", Left = 700, Top = 348, Width = 90, Enabled = false };
+
+// 4) Кнопка відкриття вікна налаштувань
+settingsButton = new Button { Text = "Налаштування", Left = 10, Top = 380, Width = 100 };
+
+// Додаємо всі контролери на форму
+this.Controls.AddRange(new Control[]
+{
+lblUser,
+userNameTextBox,
+loginButton,
+logoutButton,
+chatTextBox,
+messageTextBox,
+sendButton,
+settingsButton
+});
+
+// Підписка на обробники подій
+loginButton.Click += loginButton_Click;
+logoutButton.Click += logoutButton_Click;
+sendButton.Click += sendButton_Click;
+settingsButton.Click += settingsButton_Click;
+this.FormClosing += Form1_FormClosing;
+}
+
+/// <summary>
+/// Обробник натискання Вхід: приєднує до multicast, запускає прийом повідомлень
+/// </summary>
+private void loginButton_Click(object sender, EventArgs e)
+{
+// Отримуємо ім'я
+userName = userNameTextBox.Text.Trim();
+if (string.IsNullOrWhiteSpace(userName))
+{
+MessageBox.Show("Введіть ім'я користувача");
+return;
+}
+userNameTextBox.ReadOnly = true;
+
+try
+{
+// Налаштовуємо UDP-клієнт та приєднуємось до групи
+client = new UdpClient(LOCALPORT);
+client.JoinMulticastGroup(groupAddress, TTL);
+alive = true;
+
+// Асинхронно приймаємо повідомлення
+Task.Run(() => ReceiveMessages());
+
+// Відправляємо вітальне повідомлення в чат
+BroadcastSystemMessage($"{userName} увійшов у чат");
+
+// Перемикаємо стани кнопок
+loginButton.Enabled = false;
+logoutButton.Enabled = true;
+sendButton.Enabled = true;
+settingsButton.Enabled = false;
+}
+catch (Exception ex)
+{
+MessageBox.Show(ex.Message);
+}
+}
+/// <summary>
+/// Фоновий метод прийому повідомлень від групи
+/// </summary>
+private void ReceiveMessages()
+{
+while (alive)
+{
+try
+{
+IPEndPoint remoteEP = null;
+// Блокує до отримання
+byte[] data = client.Receive(ref remoteEP);
+string msg = Encoding.Unicode.GetString(data);
+string time = DateTime.Now.ToString("HH:mm:ss");
+
+// Повертаємося в UI-потік для оновлення контролів
+this.Invoke((MethodInvoker)(() =>
+{
+chatTextBox.SelectionFont = chatFont;
+chatTextBox.AppendText($"[{time}] {msg}\n");
+LogMessage($"[{time}] {msg}");
+}));
+}
+catch
+{
+// Ігноруємо помилки при закритті сокету
+}
+}
+}
+
+/// <summary>
+/// Обробник натискання Відправити: посилає ваше повідомлення до групи
+/// </summary>
+private void sendButton_Click(object sender, EventArgs e)
+{
+string text = messageTextBox.Text.Trim();
+if (string.IsNullOrEmpty(text)) return;
+
+// Формуємо повне повідомлення зі своїм іменем
+string fullMsg = $"{userName}: {text}";
+byte[] data = Encoding.Unicode.GetBytes(fullMsg);
+
+try
+{
+client.Send(data, data.Length, GROUPHOST, REMOTEPORT);
+string time = DateTime.Now.ToString("HH:mm:ss");
+
+// Додаємо своє повідомлення в локальний чат
+chatTextBox.SelectionFont = chatFont;
+chatTextBox.AppendText($"[{time}] {fullMsg}\n");
+LogMessage($"[{time}] {fullMsg}");
+messageTextBox.Clear();
+}
+catch (Exception ex)
+{
+MessageBox.Show(ex.Message);
+}
+}
+
+/// <summary>
+/// Обробник натискання Вихід: відключає від групи
+/// </summary>
+private void logoutButton_Click(object sender, EventArgs e)
+{
+Disconnect();
+}
+
+/// <summary>
+/// Перед закриттям форми коректно відключаємось
+/// </summary>
+private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+{
+if (alive) Disconnect();
+}
+
+/// <summary>
+/// Логіка відключення: надсилаємо системне повідомлення та закриваємо сокет
+/// </summary>
+private void Disconnect()
+{
+alive = false;
+BroadcastSystemMessage($"{userName} покинув чат");
+client.DropMulticastGroup(groupAddress);
+client.Close();
+
+// Відновлюємо стан UI
+loginButton.Enabled = true;
+logoutButton.Enabled = false;
+sendButton.Enabled = false;
+settingsButton.Enabled = true;
+userNameTextBox.ReadOnly = false;
+}
+
+/// <summary>
+/// Відправляє системне повідомлення без імені від користувача
+/// </summary>
+private void BroadcastSystemMessage(string msg)
+{
+try
+{
+byte[] data = Encoding.Unicode.GetBytes(msg);
+client.Send(data, data.Length, GROUPHOST, REMOTEPORT);
+}
+catch { }
+}
+
+/// <summary>
+/// Записує рядок до файлу логу
+/// </summary>
+private void LogMessage(string entry)
+{
+try
+{
+File.AppendAllText(logFilePath, entry + Environment.NewLine);
+}
+catch { }
+}
+
+/// <summary>
+/// Обробник відкриття вікна налаштувань сокету та шрифту
+/// </summary>
+private void settingsButton_Click(object sender, EventArgs e)
+{
+using (var dlg = new SettingsForm(LOCALPORT, REMOTEPORT, GROUPHOST, chatFont))
+{
+if (dlg.ShowDialog() == DialogResult.OK)
+{
+// Застосовуємо нові налаштування мережі та шрифту
+LOCALPORT = dlg.LocalPort;
+REMOTEPORT = dlg.RemotePort;
+GROUPHOST = dlg.GroupHost;
+groupAddress = IPAddress.Parse(GROUPHOST);
+chatFont = dlg.ChatFont;
+chatTextBox.Font = chatFont;
+}
+}
+}
+}
+
+/// <summary>
+/// Форма налаштувань: дозволяє змінити порти, multicast IP та шрифт чату
+/// </summary>
+public class SettingsForm : Form
+{
+public int LocalPort { get; private set; }
+public int RemotePort { get; private set; }
+public string GroupHost { get; private set; }
+public Font ChatFont { get; private set; }
+
+NumericUpDown upLocal;
+NumericUpDown upRemote;
+TextBox tbHost;
+Button btnFont;
+Button btnOK;
+Button btnCancel;
+
+public SettingsForm(int local, int remote, string host, Font font)
+{
+// Налаштування вікна
+this.Text = "Налаштування чату";
+this.ClientSize = new System.Drawing.Size(300, 250);
+this.StartPosition = FormStartPosition.CenterParent;
+
+// Поле для порту локального клієнта
+Label l1 = new Label { Text = "Локальний порт:", Top = 20, Left = 10 };
+upLocal = new NumericUpDown { Top = 20, Left = 120, Width = 120, Minimum = 1024, Maximum = 65535, Value = local };
+
+// Поле для порту віддалених повідомлень
+Label l2 = new Label { Text = "Віддалений порт:", Top = 60, Left = 10 };
+upRemote = new NumericUpDown { Top = 60, Left = 120, Width = 120, Minimum = 1024, Maximum = 65535, Value = remote };
+
+// Поле для multicast IP
+Label l3 = new Label { Text = "Група (IP):", Top = 100, Left = 10 };
+tbHost = new TextBox { Top = 100, Left = 120, Width = 120, Text = host };
+
+// Кнопка вибору шрифту
+btnFont = new Button { Text = "Шрифт...", Top = 140, Left = 10 };
+btnFont.Click += (s, e) =>
+{
+using (var fd = new FontDialog { Font = font })
+if (fd.ShowDialog() == DialogResult.OK)
+ChatFont = fd.Font;
+};
+ChatFont = font;
+
+// OK/Cancel
+btnOK = new Button { Text = "OK", Top = 180, Left = 50, DialogResult = DialogResult.OK };
+btnCancel = new Button { Text = "Скасувати", Top = 180, Left = 150, DialogResult = DialogResult.Cancel };
+btnOK.Click += (s, e) =>
+{
+LocalPort = (int)upLocal.Value;
+RemotePort = (int)upRemote.Value;
+GroupHost = tbHost.Text;
+};
+
+// Додаємо контролери
+this.Controls.AddRange(new Control[] { l1, upLocal, l2, upRemote, l3, tbHost, btnFont, btnOK, btnCancel });
+this.AcceptButton = btnOK;
+this.CancelButton = btnCancel;
+}
+}
+}
