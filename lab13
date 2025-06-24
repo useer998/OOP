@@ -1,0 +1,258 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace WindowsFormsApp9
+{
+static class Program
+{
+[STAThread]
+static void Main()
+{
+// Запуск головної форми додатку
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+Application.Run(new MainForm());
+}
+}
+
+public class MainForm : Form
+{
+// Контролери інтерфейсу
+private ComboBox cbDrives;
+private TextBox txtFolderFilter;
+private TextBox txtFileFilter;
+private TreeView tvDirectories;
+private ListView lvItems;
+private PictureBox pbPreview;
+private RichTextBox rtbPreview;
+private Label lblProperties;
+
+// PInvoke для встановлення підказки (cue banner) у TextBox
+[DllImport("user32.dll", CharSet = CharSet.Auto)]
+private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+private const int EM_SETCUEBANNER = 0x1501;
+
+public MainForm()
+{
+// Ініціалізація компонентів та завантаження дисків
+InitializeComponent();
+LoadDrives();
+}
+
+private void InitializeComponent()
+{
+// Заголовок та стан вікна
+Text = "Провідник файлів";
+WindowState = FormWindowState.Maximized;
+
+// Вибір диска
+cbDrives = new ComboBox { Dock = DockStyle.Top };
+cbDrives.SelectedIndexChanged += CbDrives_SelectedIndexChanged;
+
+// Поле фільтрації каталогів із підказкою
+txtFolderFilter = new TextBox { Dock = DockStyle.Top };
+txtFolderFilter.HandleCreated += (s, e) =>
+SendMessage(txtFolderFilter.Handle, EM_SETCUEBANNER, (IntPtr)1, "Фільтрувати папки...");
+txtFolderFilter.TextChanged += TxtFilter_TextChanged;
+
+// Поле фільтрації файлів із підказкою
+txtFileFilter = new TextBox { Dock = DockStyle.Top };
+txtFileFilter.HandleCreated += (s, e) =>
+SendMessage(txtFileFilter.Handle, EM_SETCUEBANNER, (IntPtr)1, "Фільтрувати файли...");
+txtFileFilter.TextChanged += TxtFilter_TextChanged;
+
+// Дерево каталогів
+tvDirectories = new TreeView { Dock = DockStyle.Left, Width = 200 };
+tvDirectories.AfterSelect += TvDirectories_AfterSelect;
+
+// Список елементів (каталоги та файли)
+lvItems = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true };
+lvItems.Columns.Add("Назва", 200);
+lvItems.Columns.Add("Тип", 100);
+lvItems.Columns.Add("Розмір", 100);
+lvItems.SelectedIndexChanged += LvItems_SelectedIndexChanged;
+
+// Посилання на властивості вибраного елемента
+lblProperties = new Label { Dock = DockStyle.Bottom, Height = 100, AutoSize = false };
+
+// Попередній перегляд зображень
+pbPreview = new PictureBox { Dock = DockStyle.Right, Width = 200, SizeMode = PictureBoxSizeMode.Zoom };
+
+// Попередній перегляд тексту
+rtbPreview = new RichTextBox { Dock = DockStyle.Right, Width = 200, Visible = false };
+
+// Додавання контролерів на форму
+Controls.Add(lvItems);
+Controls.Add(tvDirectories);
+Controls.Add(txtFileFilter);
+Controls.Add(txtFolderFilter);
+Controls.Add(cbDrives);
+Controls.Add(lblProperties);
+Controls.Add(pbPreview);
+Controls.Add(rtbPreview);
+}
+
+/// <summary>
+/// Завантажує всі доступні диски у ComboBox
+/// </summary>
+private void LoadDrives()
+{
+cbDrives.Items.Clear();
+foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady))
+cbDrives.Items.Add(drive.Name);
+if (cbDrives.Items.Count > 0)
+cbDrives.SelectedIndex = 0;
+}
+
+/// <summary>
+/// Обробник зміни вибраного диска
+/// </summary>
+private void CbDrives_SelectedIndexChanged(object sender, EventArgs e)
+{
+PopulateTree(cbDrives.SelectedItem.ToString());
+}
+
+/// <summary>
+/// Заповнює дерево каталогів з вказаним коренем
+/// </summary>
+private void PopulateTree(string root)
+{
+tvDirectories.Nodes.Clear();
+var rootNode = new TreeNode(root) { Tag = root };
+tvDirectories.Nodes.Add(rootNode);
+LoadDirectories(rootNode);
+rootNode.Expand();
+}
+
+/// <summary>
+/// Завантажує підкаталоги до вузла дерева
+/// </summary>
+private void LoadDirectories(TreeNode node)
+{
+var path = node.Tag.ToString();
+try
+{
+foreach (var dir in Directory.GetDirectories(path)
+.Where(d => PassFilter(d, txtFolderFilter.Text)))
+{
+var subNode = new TreeNode(Path.GetFileName(dir)) { Tag = dir };
+subNode.Nodes.Add("Завантаження...");
+node.Nodes.Add(subNode);
+}
+}
+catch { }
+}
+/// <summary>
+/// Обробник вибору вузла дерева: розгортання та заповнення списку
+/// </summary>
+private void TvDirectories_AfterSelect(object sender, TreeViewEventArgs e)
+{
+var node = e.Node;
+// Якщо ще не завантажені підкаталоги – зробити це
+if (node.Nodes.Count == 1 && node.Nodes[0].Text == "Завантаження...")
+{
+node.Nodes.Clear();
+LoadDirectories(node);
+}
+PopulateList(node.Tag.ToString());
+}
+
+/// <summary>
+/// Заповнює ListView каталогами та файлами з вказаного шляху
+/// </summary>
+private void PopulateList(string path)
+{
+lvItems.Items.Clear();
+try
+{
+// Додаємо папки
+foreach (var dir in Directory.GetDirectories(path)
+.Where(d => PassFilter(d, txtFolderFilter.Text)))
+{
+var di = new DirectoryInfo(dir);
+var item = new ListViewItem(di.Name) { Tag = di };
+item.SubItems.Add("Папка");
+item.SubItems.Add(string.Empty);
+lvItems.Items.Add(item);
+}
+// Додаємо файли
+foreach (var file in Directory.GetFiles(path)
+.Where(f => PassFilter(f, txtFileFilter.Text)))
+{
+var fi = new FileInfo(file);
+var item = new ListViewItem(fi.Name) { Tag = fi };
+item.SubItems.Add(fi.Extension);
+item.SubItems.Add((fi.Length / 1024).ToString("N0") + " KB");
+lvItems.Items.Add(item);
+}
+}
+catch { }
+}
+
+/// <summary>
+/// Перевіряє, чи відповідає ім'я елемента фільтру
+/// </summary>
+private bool PassFilter(string path, string filter)
+{
+return string.IsNullOrWhiteSpace(filter) ||
+Path.GetFileName(path)
+.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+}
+
+/// <summary>
+/// Обробник зміни тексту фільтра – оновлення списку
+/// </summary>
+private void TxtFilter_TextChanged(object sender, EventArgs e)
+{
+if (tvDirectories.SelectedNode != null)
+PopulateList(tvDirectories.SelectedNode.Tag.ToString());
+}
+
+/// <summary>
+/// Обробник вибору елементів у списку – показ властивостей і прев'ю
+/// </summary>
+private void LvItems_SelectedIndexChanged(object sender, EventArgs e)
+{
+if (lvItems.SelectedItems.Count == 0) return;
+
+lblProperties.Text = string.Empty;
+pbPreview.Image = null;
+rtbPreview.Visible = false;
+
+var tag = lvItems.SelectedItems[0].Tag;
+if (tag is DirectoryInfo di)
+{
+// Відображаємо властивості папки
+lblProperties.Text = $"Папка: {di.FullName}\nСтворено: {di.CreationTime}\nАтрибути: {di.Attributes}";
+var acl = di.GetAccessControl();
+lblProperties.Text += $"\nБезпека: {acl.GetSecurityDescriptorSddlForm(AccessControlSections.All)}";
+}
+else if (tag is FileInfo fi)
+{
+// Відображаємо властивості файлу
+lblProperties.Text = $"Файл: {fi.FullName}\nРозмір: {fi.Length} байт\nСтворено: {fi.CreationTime}\nАтрибути: {fi.Attributes}";
+var acl = fi.GetAccessControl();
+lblProperties.Text += $"\nБезпека: {acl.GetSecurityDescriptorSddlForm(AccessControlSections.All)}";
+
+var ext = fi.Extension.ToLower();
+// Перегляд зображень
+if (new[] { ".png", ".jpg", ".jpeg", ".bmp", ".gif" }.Contains(ext))
+{
+pbPreview.Load(fi.FullName);
+}
+// Перегляд текстових файлів
+else if (new[] { ".txt", ".cs", ".config", ".log", ".xml", ".json" }.Contains(ext))
+{
+rtbPreview.Visible = true;
+rtbPreview.LoadFile(fi.FullName, RichTextBoxStreamType.PlainText);
+}
+}
+}
+}
+}
