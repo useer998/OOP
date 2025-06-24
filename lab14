@@ -1,0 +1,354 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace WindowsFormsApp9
+{
+static class Program
+{
+[STAThread]
+static void Main()
+{
+// Запуск графічного інтерфейсу
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+Application.Run(new MainForm());
+}
+}
+
+public class MainForm : Form
+{
+// Головні контролери інтерфейсу
+private ToolStrip toolStrip;
+private ComboBox cbDrives;
+private TextBox txtFolderFilter;
+private TextBox txtFileFilter;
+private TreeView tvDirectories;
+private ListView lvItems;
+private PictureBox pbPreview;
+private RichTextBox rtbPreview;
+private Label lblProperties;
+
+// Імпорт функції для встановлення підказки (cue banner)
+[DllImport("user32.dll", CharSet = CharSet.Auto)]
+private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+private const int EM_SETCUEBANNER = 0x1501;
+
+public MainForm()
+{
+// Ініціалізація та завантаження дисків
+InitializeComponent();
+LoadDrives();
+}
+
+private void InitializeComponent()
+{
+// Заголовок форми та її початковий розмір
+Text = "Провідник файлів";
+WindowState = FormWindowState.Maximized;
+
+// Створення панелі інструментів із кнопками для операцій над файлами та папками
+toolStrip = new ToolStrip();
+toolStrip.Items.Add(new ToolStripButton("Нова папка", null, CreateFolder_Click));
+toolStrip.Items.Add(new ToolStripButton("Новий файл", null, CreateFile_Click));
+toolStrip.Items.Add(new ToolStripButton("Копіювати", null, Copy_Click));
+toolStrip.Items.Add(new ToolStripButton("Перемістити", null, Move_Click));
+toolStrip.Items.Add(new ToolStripButton("Видалити", null, Delete_Click));
+toolStrip.Items.Add(new ToolStripButton("Атрибути", null, EditAttributes_Click));
+toolStrip.Items.Add(new ToolStripButton("Редагувати текст", null, EditText_Click));
+toolStrip.Dock = DockStyle.Top;
+
+// ComboBox для вибору диска, реагує на зміну вибору
+cbDrives = new ComboBox { Dock = DockStyle.Top };
+cbDrives.SelectedIndexChanged += CbDrives_SelectedIndexChanged;
+
+// Поля фільтрації з підказками
+txtFolderFilter = new TextBox { Dock = DockStyle.Top };
+txtFolderFilter.HandleCreated += (s, e) => SendMessage(txtFolderFilter.Handle, EM_SETCUEBANNER, (IntPtr)1, "Фільтрувати папки...");
+txtFolderFilter.TextChanged += TxtFilter_TextChanged;
+
+txtFileFilter = new TextBox { Dock = DockStyle.Top };
+txtFileFilter.HandleCreated += (s, e) => SendMessage(txtFileFilter.Handle, EM_SETCUEBANNER, (IntPtr)1, "Фільтрувати файли...");
+txtFileFilter.TextChanged += TxtFilter_TextChanged;
+
+// TreeView для відображення структури папок
+tvDirectories = new TreeView { Dock = DockStyle.Left, Width = 200 };
+tvDirectories.AfterSelect += TvDirectories_AfterSelect;
+
+// ListView для списку файлів та папок
+lvItems = new ListView { Dock = DockStyle.Fill, View = View.Details, FullRowSelect = true };
+lvItems.Columns.Add("Назва", 200);
+lvItems.Columns.Add("Тип", 100);
+lvItems.Columns.Add("Розмір", 100);
+lvItems.SelectedIndexChanged += LvItems_SelectedIndexChanged;
+
+// Підпис для відображення властивостей вибраного елемента
+lblProperties = new Label { Dock = DockStyle.Bottom, Height = 100, AutoSize = false };
+
+// Контрол для прев'ю зображень
+pbPreview = new PictureBox { Dock = DockStyle.Right, Width = 200, SizeMode = PictureBoxSizeMode.Zoom };
+
+// Контрол для прев'ю текстових файлів
+rtbPreview = new RichTextBox { Dock = DockStyle.Right, Width = 200, Visible = false };
+
+// Додавання всіх контролів на форму
+Controls.Add(lvItems);
+Controls.Add(tvDirectories);
+Controls.Add(txtFileFilter);
+Controls.Add(txtFolderFilter);
+Controls.Add(cbDrives);
+Controls.Add(toolStrip);
+Controls.Add(lblProperties);
+Controls.Add(pbPreview);
+Controls.Add(rtbPreview);
+}
+
+/// <summary>Завантажує список дисків у ComboBox</summary>
+private void LoadDrives()
+{
+cbDrives.Items.Clear();
+foreach (var drive in DriveInfo.GetDrives().Where(d => d.IsReady))
+cbDrives.Items.Add(drive.Name);
+if (cbDrives.Items.Count > 0)
+cbDrives.SelectedIndex = 0;
+}
+
+/// <summary>Обробник вибору диска</summary>
+private void CbDrives_SelectedIndexChanged(object sender, EventArgs e)
+=> PopulateTree(cbDrives.SelectedItem.ToString());
+
+/// <summary>Заповнює дерево каталогів починаючи з кореневого вузла</summary>
+private void PopulateTree(string root)
+{
+tvDirectories.Nodes.Clear();
+var rootNode = new TreeNode(root) { Tag = root };
+tvDirectories.Nodes.Add(rootNode);
+LoadDirectories(rootNode);
+rootNode.Expand();
+}
+
+/// <summary>Додає підпапки до зазначеного вузла</summary>
+private void LoadDirectories(TreeNode node)
+{
+string path = node.Tag.ToString();
+try
+{
+foreach (var dir in Directory.GetDirectories(path).Where(d => PassFilter(d, txtFolderFilter.Text)))
+{
+var sub = new TreeNode(Path.GetFileName(dir)) { Tag = dir };
+sub.Nodes.Add("Завантаження...");
+node.Nodes.Add(sub);
+}
+}
+catch { }
+}
+
+/// <summary>При виборі вузла дерева – розгорнути та показати список</summary>
+private void TvDirectories_AfterSelect(object sender, TreeViewEventArgs e)
+{
+var node = e.Node;
+if (node.Nodes.Count == 1 && node.Nodes[0].Text == "Завантаження...")
+{
+node.Nodes.Clear();
+LoadDirectories(node);
+}
+PopulateList(node.Tag.ToString());
+}
+
+/// <summary>Заповнює ListView елементами з поточного каталогу</summary>
+private void PopulateList(string path)
+{
+lvItems.Items.Clear();
+try
+{
+// Папки
+foreach (var dir in Directory.GetDirectories(path).Where(d => PassFilter(d, txtFolderFilter.Text)))
+{
+var di = new DirectoryInfo(dir);
+var item = new ListViewItem(di.Name) { Tag = di };
+item.SubItems.Add("Папка");
+item.SubItems.Add(string.Empty);
+lvItems.Items.Add(item);
+}
+// Файли
+foreach (var file in Directory.GetFiles(path).Where(f => PassFilter(f, txtFileFilter.Text)))
+{
+var fi = new FileInfo(file);
+var item = new ListViewItem(fi.Name) { Tag = fi };
+item.SubItems.Add(fi.Extension);
+item.SubItems.Add((fi.Length / 1024).ToString("N0") + " KB");
+lvItems.Items.Add(item);
+}
+}
+catch { }
+}
+
+/// <summary>Перевіряє, чи проходить елемент за фільтром</summary>
+private bool PassFilter(string path, string filter)
+=> string.IsNullOrWhiteSpace(filter) || Path.GetFileName(path).IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0;
+
+/// <summary>Оновлює список при зміні тексту фільтра</summary>
+private void TxtFilter_TextChanged(object sender, EventArgs e)
+{
+if (tvDirectories.SelectedNode != null)
+PopulateList(tvDirectories.SelectedNode.Tag.ToString());
+}
+
+/// <summary>Показує властивості та прев'ю вибраного елемента</summary>
+private void LvItems_SelectedIndexChanged(object sender, EventArgs e)
+{
+if (lvItems.SelectedItems.Count == 0) return;
+lblProperties.Text = string.Empty;
+pbPreview.Image = null;
+rtbPreview.Visible = false;
+var tag = lvItems.SelectedItems[0].Tag;
+if (tag is DirectoryInfo di)
+{
+// Властивості папки
+lblProperties.Text = $"Папка: {di.FullName}\nСтворено: {di.CreationTime}\nАтрибути: {di.Attributes}";
+lblProperties.Text += $"\nБезпека: {di.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All)}";
+}
+else if (tag is FileInfo fi)
+{
+// Властивості файлу
+lblProperties.Text = $"Файл: {fi.FullName}\nРозмір: {fi.Length} байт\nСтворено: {fi.CreationTime}\nАтрибути: {fi.Attributes}";
+lblProperties.Text += $"\nБезпека: {fi.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All)}";
+string ext = fi.Extension.ToLower();
+if (new[] { ".png", ".jpg", ".bmp", ".gif" }.Contains(ext))
+pbPreview.Load(fi.FullName);  // Перевірка та показ зображення
+else if (new[] { ".txt", ".cs", ".log", ".xml", ".json" }.Contains(ext))
+{
+rtbPreview.Visible = true;
+rtbPreview.LoadFile(fi.FullName, RichTextBoxStreamType.PlainText);  // Перевірка та показ тексту
+}
+}
+}
+
+// Створення нової папки
+private void CreateFolder_Click(object s, EventArgs e)
+{
+var path = tvDirectories.SelectedNode?.Tag.ToString();
+if (path == null) return;
+string newName = Prompt.Show("Назва нової папки:", "Створити папку");
+if (!string.IsNullOrWhiteSpace(newName)) Directory.CreateDirectory(Path.Combine(path, newName));
+PopulateTree(cbDrives.SelectedItem.ToString());
+}
+
+// Створення нового файла
+private void CreateFile_Click(object s, EventArgs e)
+{
+var path = tvDirectories.SelectedNode?.Tag.ToString();
+if (path == null) return;
+string newName = Prompt.Show("Назва файлу:", "Створити файл");
+if (!string.IsNullOrWhiteSpace(newName)) File.Create(Path.Combine(path, newName)).Close();
+PopulateTree(cbDrives.SelectedItem.ToString());
+}
+
+// Обробник копіювання
+private void Copy_Click(object s, EventArgs e) => CopyOrMove(isCopy: true);
+// Обробник переміщення
+private void Move_Click(object s, EventArgs e) => CopyOrMove(isCopy: false);
+
+/// <summary>Універсальний метод для копіювання або переміщення</summary>
+private void CopyOrMove(bool isCopy)
+{
+if (lvItems.SelectedItems.Count == 0) return;
+string source = ((FileSystemInfo)lvItems.SelectedItems[0].Tag).FullName;
+string targetDir = Prompt.Show("Папка призначення:", isCopy ? "Копіювати" : "Перемістити");
+if (string.IsNullOrWhiteSpace(targetDir)) return;
+if (isCopy)
+{
+if (Directory.Exists(source)) CopyDirectory(source, targetDir);
+else File.Copy(source, Path.Combine(targetDir, Path.GetFileName(source)), true);
+}
+else
+{
+if (Directory.Exists(source)) Directory.Move(source, Path.Combine(targetDir, Path.GetFileName(source)));
+else File.Move(source, Path.Combine(targetDir, Path.GetFileName(source)));
+}
+PopulateTree(cbDrives.SelectedItem.ToString());
+}
+
+/// <summary>Рекурсивне копіювання директорії</summary>
+private void CopyDirectory(string src, string dest)
+{
+Directory.CreateDirectory(dest);
+foreach (var file in Directory.GetFiles(src))
+File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), true);
+foreach (var dir in Directory.GetDirectories(src))
+CopyDirectory(dir, Path.Combine(dest, Path.GetFileName(dir)));
+}
+
+// Видалення файлу або папки
+private void Delete_Click(object s, EventArgs e)
+{
+if (lvItems.SelectedItems.Count == 0) return;
+var info = (FileSystemInfo)lvItems.SelectedItems[0].Tag;
+if (MessageBox.Show($"Видалити '{info.Name}'?", "Підтвердження", MessageBoxButtons.YesNo) == DialogResult.Yes)
+{
+if (info is DirectoryInfo di) di.Delete(true);
+else File.Delete(info.FullName);
+PopulateTree(cbDrives.SelectedItem.ToString());
+}
+}
+
+// Редагування атрибутів файла/папки
+private void EditAttributes_Click(object s, EventArgs e)
+{
+if (lvItems.SelectedItems.Count == 0) return;
+var info = (FileSystemInfo)lvItems.SelectedItems[0].Tag;
+var attrs = Prompt.Show("Атрибути (comma-separated):", "Редагувати атрибути", info.Attributes.ToString());
+if (attrs != null && Enum.TryParse<FileAttributes>(attrs.Trim(), out var newAttr))
+info.Attributes = newAttr;
+LvItems_SelectedIndexChanged(null, null);
+}
+
+// Редагування текстового файла у вбудованому вікні
+private void EditText_Click(object s, EventArgs e)
+{
+if (lvItems.SelectedItems.Count == 0) return;
+var fi = lvItems.SelectedItems[0].Tag as FileInfo;
+if (fi == null || !new[] { ".txt", ".cs", ".log", ".xml", ".json" }.Contains(fi.Extension.ToLower())) return;
+string content = File.ReadAllText(fi.FullName);
+string edited = Prompt.ShowMultiline("Редагування тексту:", fi.Name, content);
+if (edited != null) File.WriteAllText(fi.FullName, edited);
+PopulateList(tvDirectories.SelectedNode.Tag.ToString());
+}
+}
+
+// Допоміжний діалог для введення тексту
+public static class Prompt
+{
+public static string Show(string text, string caption, string defaultValue = "")
+{
+// Просте однорядкове вікно введення
+Form prompt = new Form() { Width = 400, Height = 150, Text = caption, StartPosition = FormStartPosition.CenterParent };
+Label lbl = new Label() { Left = 10, Top = 10, Text = text, AutoSize = true };
+TextBox txt = new TextBox() { Left = 10, Top = 40, Width = 360, Text = defaultValue };
+Button ok = new Button() { Text = "OK", Left = 200, Width = 80, Top = 70, DialogResult = DialogResult.OK };
+Button cancel = new Button() { Text = "Скасувати", Left = 290, Width = 80, Top = 70, DialogResult = DialogResult.Cancel };
+prompt.Controls.Add(lbl); prompt.Controls.Add(txt); prompt.Controls.Add(ok); prompt.Controls.Add(cancel);
+prompt.AcceptButton = ok;
+return prompt.ShowDialog() == DialogResult.OK ? txt.Text : null;
+}
+
+public static string ShowMultiline(string text, string caption, string defaultValue)
+{
+// Багаторядкове редагування тексту
+Form prompt = new Form() { Width = 600, Height = 400, Text = caption, StartPosition = FormStartPosition.CenterParent };
+Label lbl = new Label() { Left = 10, Top = 10, Text = text, AutoSize = true };
+RichTextBox rtb = new RichTextBox() { Left = 10, Top = 40, Width = 560, Height = 280, Text = defaultValue };
+Button ok = new Button() { Text = "OK", Left = 380, Width = 80, Top = 330, DialogResult = DialogResult.OK };
+Button cancel = new Button() { Text = "Скасувати", Left = 480, Width = 80, Top = 330, DialogResult = DialogResult.Cancel };
+prompt.Controls.Add(lbl); prompt.Controls.Add(rtb); prompt.Controls.Add(ok); prompt.Controls.Add(cancel);
+prompt.AcceptButton = ok;
+return prompt.ShowDialog() == DialogResult.OK ? rtb.Text : null;
+}
+}
+}
+
