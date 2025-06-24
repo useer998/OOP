@@ -1,0 +1,177 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+
+namespace WindowsFormsAppGeo
+{
+// Точка входу в програму
+static class Program
+{
+[STAThread]
+static void Main()
+{
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+Application.Run(new MainForm());
+}
+}
+
+// Головна форма, де створюється інтерфейс і логіка роботи з "БД"
+public class MainForm : Form
+{
+// Імітація бази даних за допомогою DataSet
+DataSet ds = new DataSet();
+DataTable dtGeoObjects; // Таблиця географічних об’єктів
+DataTable dtDetails;    // Таблиця додаткових відомостей про об’єкт
+
+// UI елементи
+DataGridView dgvReport;
+TextBox txtObjectName;
+Button btnInsert;
+Button btnReportAll;
+Button btnReportMountains;
+Button btnSearch;
+Label lblSearch;
+
+public MainForm()
+{
+this.Text = "Географічні об’єкти - Система";
+this.Size = new Size(800, 600);
+InitializeDatabase();
+InitializeUI();
+}
+
+// Метод для створення таблиць (імітація бази даних)
+private void InitializeDatabase()
+{
+dtGeoObjects = new DataTable("GeoObjects");
+dtGeoObjects.Columns.Add("ID", typeof(int));
+dtGeoObjects.Columns.Add("Name", typeof(string));
+dtGeoObjects.Columns.Add("Type", typeof(string)); // наприклад: Гора, Річка, Місто тощо
+dtGeoObjects.Columns.Add("Region", typeof(string)); // область чи держава
+dtGeoObjects.Columns.Add("Description", typeof(string));
+dtGeoObjects.PrimaryKey = new DataColumn[] { dtGeoObjects.Columns["ID"] };
+
+dtDetails = new DataTable("Details");
+dtDetails.Columns.Add("ID", typeof(int));
+dtDetails.Columns.Add("ObjectID", typeof(int));
+dtDetails.Columns.Add("DetailDescription", typeof(string));
+dtDetails.PrimaryKey = new DataColumn[] { dtDetails.Columns["ID"] };
+
+ds.Tables.Add(dtGeoObjects);
+ds.Tables.Add(dtDetails);
+
+DataRelation relation = new DataRelation(
+"GeoObject_Details",
+dtGeoObjects.Columns["ID"],
+dtDetails.Columns["ObjectID"]);
+ds.Relations.Add(relation);
+}
+
+// Метод для динамічного створення елементів інтерфейсу
+private void InitializeUI()
+{
+btnInsert = new Button();
+btnInsert.Text = "Вставити приклади";
+btnInsert.Location = new Point(20, 20);
+btnInsert.Click += BtnInsert_Click;
+this.Controls.Add(btnInsert);
+
+btnReportAll = new Button();
+btnReportAll.Text = "Звіт: Всі об’єкти";
+btnReportAll.Location = new Point(150, 20);
+btnReportAll.Click += BtnReportAll_Click;
+this.Controls.Add(btnReportAll);
+
+btnReportMountains = new Button();
+btnReportMountains.Text = "Звіт: Тип = Гора";
+btnReportMountains.Location = new Point(300, 20);
+btnReportMountains.Click += BtnReportMountains_Click;
+this.Controls.Add(btnReportMountains);
+
+lblSearch = new Label();
+lblSearch.Text = "Пошук за назвою об’єкта:";
+lblSearch.Location = new Point(20, 60);
+lblSearch.AutoSize = true;
+this.Controls.Add(lblSearch);
+
+txtObjectName = new TextBox();
+txtObjectName.Location = new Point(180, 60);
+txtObjectName.Width = 150;
+this.Controls.Add(txtObjectName);
+
+btnSearch = new Button();
+btnSearch.Text = "Пошук";
+btnSearch.Location = new Point(350, 60);
+btnSearch.Click += BtnSearch_Click;
+this.Controls.Add(btnSearch);
+
+dgvReport = new DataGridView();
+dgvReport.Location = new Point(20, 100);
+dgvReport.Size = new Size(740, 440);
+this.Controls.Add(dgvReport);
+}
+
+// Обробник для вставки прикладних даних
+private void BtnInsert_Click(object sender, EventArgs e)
+{
+dtGeoObjects.Rows.Clear();
+dtDetails.Rows.Clear();
+
+dtGeoObjects.Rows.Add(1, "Говерла", "Гора", "Закарпатська область", "Найвища точка України");
+dtGeoObjects.Rows.Add(2, "Дніпро", "Річка", "Україна", "Одна з найбільших річок Європи");
+dtGeoObjects.Rows.Add(3, "Київ", "Місто", "Україна", "Столиця України");
+dtGeoObjects.Rows.Add(4, "Львів", "Місто", "Україна", "Культурний центр");
+dtGeoObjects.Rows.Add(5, "Чорне море", "Море", "Південна Україна", "Море на півдні України");
+dtGeoObjects.Rows.Add(6, "Карпати", "Гори", "Західна Україна", "Гірський масив із численними туристичними маршрутами");
+dtGeoObjects.Rows.Add(7, "Озеро Світязь", "Озеро", "Волинська область", "Найглибше озеро України");
+dtGeoObjects.Rows.Add(8, "Тиса", "Річка", "Закарпатська область", "Притока Дунаю");
+
+dtDetails.Rows.Add(1, 1, "Маршрут зазвичай починається зі селища Ясіня");
+dtDetails.Rows.Add(2, 1, "Підйом займає приблизно 5-7 годин в залежності від підготовки");
+dtDetails.Rows.Add(3, 2, "На Дніпрі розташовані кілька великих водосховищ");
+dtDetails.Rows.Add(4, 3, "В Києві є безліч музеїв та архітектурних пам’яток");
+dtDetails.Rows.Add(5, 4, "У Львові популярні кав’ярні та старовинні вулички");
+dtDetails.Rows.Add(6, 5, "Чорне море має солону воду та популярне серед відпочивальників");
+dtDetails.Rows.Add(7, 6, "У Карпатах є маршрути для піших походів та лижні курорти");
+dtDetails.Rows.Add(8, 7, "Світязь привертає увагу чистою водою та мальовничими пейзажами");
+dtDetails.Rows.Add(9, 8, "Тиса відома своїми бурхливими потоками навесні");
+
+MessageBox.Show("Прикладні дані географічних об’єктів успішно вставлено!");
+}
+
+// Обробник для кнопки "Звіт: Всі об’єкти"
+private void BtnReportAll_Click(object sender, EventArgs e)
+{
+dgvReport.DataSource = dtGeoObjects;
+}
+
+// Обробник для кнопки "Звіт: Тип = Гора"
+private void BtnReportMountains_Click(object sender, EventArgs e)
+{
+DataView dv = new DataView(dtGeoObjects);
+dv.RowFilter = "Type = 'Гора'";
+dgvReport.DataSource = dv;
+}
+
+// Обробник для кнопки "Пошук"
+private void BtnSearch_Click(object sender, EventArgs e)
+{
+string searchText = txtObjectName.Text.Trim();
+if (!string.IsNullOrEmpty(searchText))
+{
+DataView dv = new DataView(dtGeoObjects);
+dv.RowFilter = $"Name LIKE '%{searchText}%'";
+dgvReport.DataSource = dv;
+}
+else
+{
+MessageBox.Show("Введіть назву об’єкта для пошуку.");
+}
+}
+}
+}
