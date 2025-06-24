@@ -1,0 +1,343 @@
+using System;
+using System.Collections.Generic;
+using System.Windows.Forms;
+using Word = Microsoft.Office.Interop.Word;
+
+namespace WordTemplateDynamicCreator
+{
+static class Program
+{
+[STAThread]
+static void Main()
+{
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+Application.Run(new MainForm());
+}
+}
+
+public class MainForm : Form
+{
+// Елементи управління форми
+private ComboBox comboBoxTemplates;
+private Label labelTemplate;
+private TextBox txtFullName;
+private Label labelFullName;
+private TextBox txtPosition;
+private Label labelPosition;
+private TextBox txtDepartment;
+private Label labelDepartment;
+private Button btnGenerate;
+private Button btnSave;
+private Button btnSearchReplace;
+
+// Список назв шаблонів для відображення (без необхідності в окремих файлах)
+private readonly List<string> templateNames = new List<string>
+{
+"Наказ призначення на посаду",
+"Функціональне резюме (Office.com)",
+"Рекламна листівка (Office.com)",
+"Аркуш призначення завдань (Office.com)"
+};
+
+private Word.Application wordApp = null;
+private Word.Document wordDoc = null;
+
+public MainForm()
+{
+this.Text = "Генератор документа";
+this.StartPosition = FormStartPosition.CenterScreen;
+this.FormClosed += MainForm_FormClosed;
+InitializeComponents();
+LoadTemplates();
+}
+
+private void InitializeComponents()
+{
+// Встановлення розмірів форми
+this.Width = 450;
+this.Height = 250;
+
+// Створення та позиціонування елементів управління
+labelTemplate = new Label() { Text = "Вибір шаблону документа:", Left = 10, Top = 15, Width = 150 };
+comboBoxTemplates = new ComboBox() { Left = 170, Top = 12, Width = 250 };
+
+labelFullName = new Label() { Text = "Прізвище, ім'я:", Left = 10, Top = 50, Width = 150 };
+txtFullName = new TextBox() { Left = 170, Top = 47, Width = 250 };
+
+labelPosition = new Label() { Text = "Посада:", Left = 10, Top = 85, Width = 150 };
+txtPosition = new TextBox() { Left = 170, Top = 82, Width = 250 };
+
+labelDepartment = new Label() { Text = "Відділ:", Left = 10, Top = 120, Width = 150 };
+txtDepartment = new TextBox() { Left = 170, Top = 117, Width = 250 };
+
+btnGenerate = new Button() { Text = "Генерувати документ", Left = 10, Top = 160, Width = 130 };
+btnGenerate.Click += btnGenerate_Click;
+
+btnSave = new Button() { Text = "Зберегти документ", Left = 150, Top = 160, Width = 130 };
+btnSave.Click += btnSave_Click;
+
+btnSearchReplace = new Button() { Text = "Пошук і заміна", Left = 290, Top = 160, Width = 130 };
+btnSearchReplace.Click += btnSearchReplace_Click;
+
+// Додавання елементів на форму
+this.Controls.Add(labelTemplate);
+this.Controls.Add(comboBoxTemplates);
+this.Controls.Add(labelFullName);
+this.Controls.Add(txtFullName);
+this.Controls.Add(labelPosition);
+this.Controls.Add(txtPosition);
+this.Controls.Add(labelDepartment);
+this.Controls.Add(txtDepartment);
+this.Controls.Add(btnGenerate);
+this.Controls.Add(btnSave);
+this.Controls.Add(btnSearchReplace);
+}
+
+// Завантаження назв шаблонів у ComboBox
+private void LoadTemplates()
+{
+foreach (var tpl in templateNames)
+{
+comboBoxTemplates.Items.Add(tpl);
+}
+if (comboBoxTemplates.Items.Count > 0)
+comboBoxTemplates.SelectedIndex = 0;
+}
+
+// Обробник кнопки "Генерувати документ"
+private void btnGenerate_Click(object sender, EventArgs e)
+{
+// Отримання даних з текстових полів
+string fullName = txtFullName.Text;
+string position = txtPosition.Text;
+string department = txtDepartment.Text;
+
+if (comboBoxTemplates.SelectedItem == null)
+{
+MessageBox.Show("Спочатку оберіть шаблон!");
+return;
+}
+string selectedTemplate = comboBoxTemplates.SelectedItem.ToString();
+
+try
+{
+// Ініціалізація Word Application та створення нового документа
+wordApp = new Word.Application();
+wordApp.Visible = false;
+wordDoc = wordApp.Documents.Add();
+
+// Виклик методу для створення шаблону в залежності від обраного значення
+CreateTemplateDocument(selectedTemplate);
+
+// Виконання заміни плейсхолдерів на введені дані.
+// Припустимо, що у всіх шаблонах використовуються загальні плейсхолдери:
+// <<FullName>>, <<Position>>, <<Department>>
+ReplacePlaceholder("<<FullName>>", fullName);
+ReplacePlaceholder("<<Position>>", position);
+ReplacePlaceholder("<<Department>>", department);
+
+// Показуємо документ користувачу
+wordApp.Visible = true;
+}
+catch (Exception ex)
+{
+MessageBox.Show("Помилка: " + ex.Message);
+}
+}
+/// <summary>
+/// Створює вміст документа як шаблон залежно від обраного варіанту.
+/// </summary>
+/// <param name="templateName">Назва шаблону</param>
+private void CreateTemplateDocument(string templateName)
+{
+// Очищення документа (якщо потрібно) та використання Range = весь документ
+Word.Range range = wordDoc.Content;
+range.Text = "";  // очистка тексту
+
+switch (templateName)
+{
+case "Наказ призначення на посаду":
+{
+// Заголовок
+Word.Paragraph header = wordDoc.Content.Paragraphs.Add();
+header.Range.Text = "Наказ призначення на посаду";
+header.Range.Font.Size = 16;
+header.Range.Font.Bold = 1;
+header.Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+header.Range.InsertParagraphAfter();
+
+// Основна частина з плейсхолдерами
+Word.Paragraph body = wordDoc.Content.Paragraphs.Add();
+body.Range.Text =
+"Прізвище, ім'я: <<FullName>>\n" +
+"Посада: <<Position>>\n" +
+"Відділ: <<Department>>\n" +
+"Наказано призначити на зазначену посаду.";
+body.Range.Font.Size = 12;
+body.Range.Font.Bold = 0;
+body.Range.InsertParagraphAfter();
+}
+break;
+case "Функціональне резюме (Office.com)":
+{
+// Заголовок резюме
+Word.Paragraph header = wordDoc.Content.Paragraphs.Add();
+header.Range.Text = "Функціональне резюме";
+header.Range.Font.Size = 18;
+header.Range.Font.Bold = 1;
+header.Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+header.Range.InsertParagraphAfter();
+
+// Основні розділи резюме
+Word.Paragraph summary = wordDoc.Content.Paragraphs.Add();
+summary.Range.Text =
+"Особисті дані:\n" +
+"Прізвище, ім'я: <<FullName>>\n" +
+"Посада: <<Position>>\n" +
+"Відділ: <<Department>>\n\n" +
+"Професійні навички:\n" +
+"- Навичка 1\n- Навичка 2\n- Навичка 3\n\n" +
+"Досягнення:\n- Досягнення 1\n- Досягнення 2";
+summary.Range.Font.Size = 12;
+summary.Range.Font.Bold = 0;
+summary.Range.InsertParagraphAfter();
+}
+break;
+case "Рекламна листівка (Office.com)":
+{
+// Заголовок рекламної листівки
+Word.Paragraph header = wordDoc.Content.Paragraphs.Add();
+header.Range.Text = "Рекламна листівка";
+header.Range.Font.Size = 20;
+header.Range.Font.Bold = 1;
+header.Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+header.Range.InsertParagraphAfter();
+
+// Текст рекламної листівки
+Word.Paragraph flyer = wordDoc.Content.Paragraphs.Add();
+flyer.Range.Text =
+"Пропонуємо нові можливості для вашого бізнесу!\n\n" +
+"Контактна особа: <<FullName>>\n" +
+"Посада: <<Position>>\n" +
+"Відділ: <<Department>>\n\n" +
+"Звертайтесь за детальнішою інформацією.";
+flyer.Range.Font.Size = 14;
+flyer.Range.Font.Bold = 0;
+flyer.Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+flyer.Range.InsertParagraphAfter();
+}
+break;
+case "Аркуш призначення завдань (Office.com)":
+{
+// Заголовок аркуша завдань
+Word.Paragraph header = wordDoc.Content.Paragraphs.Add();
+header.Range.Text = "Аркуш призначення завдань";
+header.Range.Font.Size = 16;
+header.Range.Font.Bold = 1;
+header.Range.ParagraphFormat.Alignment = Word.WdParagraphAlignment.wdAlignParagraphCenter;
+header.Range.InsertParagraphAfter();
+
+// Створення таблиці для завдань
+Word.Range tableRange = wordDoc.Bookmarks.get_Item("\\endofdoc").Range;
+// Таблиця з 4 рядками: наприклад, "Завдання", "Виконавець", "Термін", "Статус"
+Word.Table taskTable = wordDoc.Tables.Add(tableRange, 5, 4);
+taskTable.Range.Font.Size = 12;
+taskTable.Borders.Enable = 1;
+
+// Заповнення заголовків стовпців
+taskTable.Cell(1, 1).Range.Text = "№";
+taskTable.Cell(1, 2).Range.Text = "Завдання";
+taskTable.Cell(1, 3).Range.Text = "Виконавець";
+taskTable.Cell(1, 4).Range.Text = "Термін";
+
+// Заповнення першого рядка даними з плейсхолдерами (при потребі можна додати інші)
+taskTable.Cell(2, 1).Range.Text = "1";
+taskTable.Cell(2, 2).Range.Text = "Приклад завдання: <<FullName>>";
+taskTable.Cell(2, 3).Range.Text = "<<Position>>";
+taskTable.Cell(2, 4).Range.Text = "<<Department>>";
+// Інші рядки можна залишити пустими або заповнити за потребою
+}
+break;
+default:
+{
+// Якщо шаблон не визначено – просто створюємо базовий документ
+Word.Paragraph para = wordDoc.Content.Paragraphs.Add();
+para.Range.Text = "Не вказано шаблон.";
+para.Range.InsertParagraphAfter();
+}
+break;
+}
+}
+
+/// <summary>
+/// Метод заміни плейсхолдеру у документі.
+/// </summary>
+/// <param name="placeholder">Текст для пошуку</param>
+/// <param name="replacement">Новий текст для заміни</param>
+private void ReplacePlaceholder(string placeholder, string replacement)
+{
+Word.Find findObject = wordApp.Selection.Find;
+findObject.ClearFormatting();
+findObject.Text = placeholder;
+findObject.Replacement.ClearFormatting();
+findObject.Replacement.Text = replacement;
+
+object replaceAll = Word.WdReplace.wdReplaceAll;
+findObject.Execute(Replace: ref replaceAll);
+}
+
+// Обробник кнопки "Зберегти документ"
+private void btnSave_Click(object sender, EventArgs e)
+{
+if (wordDoc == null)
+{
+MessageBox.Show("Документ не створено!");
+return;
+}
+using (SaveFileDialog sfd = new SaveFileDialog())
+{
+sfd.Filter = "Word Document (*.docx)|*.docx";
+if (sfd.ShowDialog() == DialogResult.OK)
+{
+wordDoc.SaveAs2(sfd.FileName);
+MessageBox.Show("Документ збережено!");
+}
+}
+}
+
+// Обробник кнопки "Пошук і заміна"
+private void btnSearchReplace_Click(object sender, EventArgs e)
+{
+if (wordDoc == null)
+{
+MessageBox.Show("Документ не відкрито!");
+return;
+}
+// string searchText = Microsoft.VisualBasic.Interaction.InputBox("Введіть текст для пошуку", "Пошук");
+//  string replaceText = Microsoft.VisualBasic.Interaction.InputBox("Введіть текст для заміни", "Заміна");
+
+//  ReplacePlaceholder(searchText, replaceText);
+MessageBox.Show("Пошук і заміна виконані!");
+}
+
+// Обробка події закриття форми для звільнення ресурсів Word
+private void MainForm_FormClosed(object sender, FormClosedEventArgs e)
+{
+try
+{
+if (wordDoc != null)
+{
+wordDoc.Close(false);
+wordDoc = null;
+}
+if (wordApp != null)
+{
+wordApp.Quit();
+wordApp = null;
+}
+}
+catch { }
+}
+}
+}
